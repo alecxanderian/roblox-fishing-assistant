@@ -8,6 +8,7 @@ F6             Start / pause
 F7             Stop and release the mouse
 F8             Show pixel detection diagnostics in the tooltip and log
 F9             Manually start combat recovery
+F10            Open persistent catch history (takes focus and pauses fishing)
 Ctrl+Alt+Esc   Exit and release the mouse
 
 The tooltip shows the current stage, detected tension marker, panel colors,
@@ -45,8 +46,28 @@ F8 helps identify a missing panel or marker. Avoid moving while fishing.
 
 Fishing.log records state transitions and calibration diagnostics.
 The tools directory and reference images were used to inspect the recording;
-the running application requires only Fishing.exe and Fishing.ini (or the
-Fishing.ahk source with AutoHotkey v2 installed).
+the running application requires Fishing.exe, Fishing.ini, and CatchLogger.ps1
+(or the Fishing.ahk source with AutoHotkey v2 installed).
+
+CATCH HISTORY AND DISCORD
+
+CatchHistory.tsv contains the history; catches/ contains event JSON and cropped
+reward images. F10 shows the history in the app. Close history and press F6 in
+Roblox to resume fishing. Local history works without a Discord webhook.
+
+Copy Fishing.secrets.example.ini to Fishing.secrets.ini and set WebhookURL in
+the Discord section. The secrets file, history, and images are excluded from
+GitHub. No secret is embedded in the executable. The worker sends catch details
+and a cropped reward card; it never uploads the full desktop or Discord screen.
+
+History settings:
+Enabled             1 enables catch capture and OCR (default).
+IncludeRewardImage  1 attaches the verified reward crop; 0 sends text only.
+
+Windows PowerShell 5.1 and built-in Windows OCR handle logging in a separate
+worker, so network and OCR do not block reeling. Delivery status is recorded
+locally. Rate limits are retried; ambiguous deliveries are not automatically
+reposted. Unsaved queued events are processed on the next application launch.
 
 Developer checks:
 AutoHotkey64.exe /ErrorStdOut Fishing.ahk --check

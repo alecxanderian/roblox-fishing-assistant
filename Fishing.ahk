@@ -30,11 +30,16 @@ global combatProbeMs := Integer(IniRead(settings, 'Combat', 'ReturnProbeMs', 600
 global combatStarted := 0, lastAttack := 0, interactHeld := false, cancelHeld := false, lastDamageAt := 0
 global healthAt := 0, previousHealth := -1, lastReelEnd := 0
 global captureEncounters := A_Args.Length >= 2 && A_Args[2] = '--capture-encounters'
+global historyEnabled := Integer(IniRead(settings, 'History', 'Enabled', 1))
+global historyImages := Integer(IniRead(settings, 'History', 'IncludeRewardImage', 1))
+global captureSequence := 0, historyGui := 0, historyList := 0
 OnExit((*) => ReleaseAll())
 SetTimer Tick, 15
-ToolTip 'Fishing ready | F6 start/pause | F7 stop | F8 inspect', 20, 60
+ToolTip 'Fishing ready | F6 start/pause | F7 stop | F10 history', 20, 60
 if A_Args.Length && A_Args[1] = '--check'
     ExitApp()
+if historyEnabled
+    SetTimer ResumeHistory, -500
 if A_Args.Length && (A_Args[1] = '--test' || A_Args[1] = '--run') {
     if A_Args[1] = '--test' {
         testSeconds := A_Args.Length >= 2 ? Max(5, Min(900, Integer(A_Args[2]))) : 35
@@ -52,6 +57,7 @@ F6::Toggle()
 F7::Stop('Stopped by F7')
 F8::Inspect()
 F9::ManualCombat()
+F10::ShowHistory()
 ^!Esc::ExitApp()
 
 ManualCombat() {
@@ -86,6 +92,120 @@ BeginTest() {
 Log(msg) {
     global logPath
     try FileAppend FormatTime(, 'yyyy-MM-dd HH:mm:ss') ' | ' msg '`n', logPath
+}
+ResumeHistory() {
+    helper := A_ScriptDir '\CatchLogger.ps1'
+    if FileExist(helper) {
+        command := '"' A_WinDir '\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -File "'
+            . helper '" -ProcessPending'
+        try Run command, A_ScriptDir, 'Hide'
+    }
+}
+CaptureCatch() {
+    global historyEnabled, historyImages, hwnd, captureSequence, reelStarted, maxProgress
+    if !historyEnabled || !WinActive('ahk_id ' hwnd)
+        return
+    try {
+        helper := A_ScriptDir '\CatchLogger.ps1'
+        if !FileExist(helper) {
+            Log('HISTORY helper missing: CatchLogger.ps1')
+            return
+        }
+        g := Geometry()
+        folder := A_ScriptDir '\catches'
+        DirCreate folder
+        captureSequence += 1
+        id := A_NowUTC '-' Format('{:03}', A_MSec) '-' DllCall('GetCurrentProcessId') '-' captureSequence
+        picture := folder '\' id '.bmp'
+        ; Capture only the reward card, never the full screen or Discord monitor.
+        SaveScreenBmp(picture, Round(g.x+g.w/2-210*g.s), Round(g.y+g.h*0.25),
+            Round(420*g.s), Round(g.h*0.20))
+        job := folder '\' id '.ini'
+        IniWrite id, job, 'Catch', 'Id'
+        IniWrite FormatTime(A_NowUTC, "yyyy-MM-dd'T'HH:mm:ss'Z'"), job, 'Catch', 'TimestampUtc'
+        IniWrite FormatTime(, 'yyyy-MM-dd HH:mm:ss'), job, 'Catch', 'LocalTime'
+        IniWrite picture, job, 'Catch', 'ImagePath'
+        IniWrite Round(Max(0, A_TickCount-reelStarted-600)/1000, 2), job, 'Catch', 'ReelSeconds'
+        IniWrite historyImages, job, 'Catch', 'IncludeImage'
+        IniWrite Round(maxProgress*100), job, 'Catch', 'MaxProgress'
+        command := '"' A_WinDir '\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -File "'
+            . helper '" -JobPath "' job '"'
+        Run command, A_ScriptDir, 'Hide'
+        Log('HISTORY reward queued: ' id)
+    } catch as err {
+        Log('HISTORY capture failed: ' err.Message ' at line ' err.Line)
+    }
+}
+SaveScreenBmp(path, x, y, w, h) {
+    screen := DllCall('GetDC', 'Ptr', 0, 'Ptr')
+    memory := DllCall('gdi32\CreateCompatibleDC', 'Ptr', screen, 'Ptr')
+    bitmap := 0, old := 0
+    try {
+        info := Buffer(40, 0)
+        NumPut('UInt', 40, 'Int', w, 'Int', -h, 'UShort', 1, 'UShort', 32, info)
+        bits := 0
+        bitmap := DllCall('gdi32\CreateDIBSection', 'Ptr', screen, 'Ptr', info, 'UInt', 0,
+            'Ptr*', &bits, 'Ptr', 0, 'UInt', 0, 'Ptr')
+        if !bitmap || !bits
+            throw Error('Could not allocate reward image')
+        old := DllCall('gdi32\SelectObject', 'Ptr', memory, 'Ptr', bitmap, 'Ptr')
+        if !DllCall('gdi32\BitBlt', 'Ptr', memory, 'Int', 0, 'Int', 0, 'Int', w, 'Int', h,
+            'Ptr', screen, 'Int', x, 'Int', y, 'UInt', 0x40CC0020)
+            throw Error('Could not capture reward image')
+        header := Buffer(14, 0), size := w*h*4
+        NumPut('UShort', 0x4D42, 'UInt', 54+size, header)
+        NumPut('UInt', 54, header, 10)
+        output := FileOpen(path, 'w')
+        try {
+            output.RawWrite(header)
+            output.RawWrite(info)
+            output.RawWrite(bits, size)
+        } finally {
+            output.Close()
+        }
+    } finally {
+        if old
+            DllCall('gdi32\SelectObject', 'Ptr', memory, 'Ptr', old)
+        if bitmap
+            DllCall('gdi32\DeleteObject', 'Ptr', bitmap)
+        if memory
+            DllCall('gdi32\DeleteDC', 'Ptr', memory)
+        if screen
+            DllCall('ReleaseDC', 'Ptr', 0, 'Ptr', screen)
+    }
+}
+ShowHistory() {
+    global historyGui, historyList
+    if IsObject(historyGui)
+        historyGui.Destroy()
+    historyGui := Gui('+Resize', 'Fishing Catch History')
+    historyGui.SetFont('s10', 'Segoe UI')
+    historyGui.AddText('xm', 'Confirmed catches and encounters persist between sessions. Discord status appears below.')
+    historyGui.AddButton('xm w100', 'Refresh').OnEvent('Click', (*) => RefreshHistory())
+    historyList := historyGui.AddListView('xm w920 r18 Grid', ['Time', 'Catch', 'Weight', 'Type', 'Discord', 'Reel (s)'])
+    historyGui.OnEvent('Size', (gui, minmax, width, height) => historyList.Move(, , Max(500, width-30), Max(150, height-95)))
+    RefreshHistory()
+    historyGui.Show()
+}
+RefreshHistory() {
+    global historyList
+    historyList.Delete()
+    path := A_ScriptDir '\CatchHistory.tsv'
+    if FileExist(path) {
+        try {
+            lines := StrSplit(RTrim(FileRead(path, 'UTF-8'), '`r`n'), '`n', '`r')
+            Loop lines.Length {
+                index := lines.Length-A_Index+1
+                if index <= 1
+                    break
+                fields := StrSplit(lines[index], '`t')
+                if fields.Length >= 6
+                    historyList.Add('', fields[1], fields[2], fields[3], fields[4], fields[5], fields[6])
+            }
+        }
+    }
+    Loop 6
+        historyList.ModifyCol(A_Index, 'AutoHdr')
 }
 Release() {
     global held
@@ -360,6 +480,7 @@ Tick() {
                     Log('REEL ended; maximum green progress=' Round(maxProgress*100)
                         '%; duration=' Round(Max(0, A_TickCount-reelStarted-600)/1000, 2) 's')
                     SetPhase('Catch finished')
+                    SetTimer CaptureCatch, -20
                 }
             }
             if elapsed > 90000
@@ -430,7 +551,7 @@ ShowTip(force := false) {
     if !force && A_TickCount-lastTip < 150
         return
     lastTip := A_TickCount
-    ToolTip 'Fishing | ' phase '`n' detail '`nF6 start/pause | F7 stop | F8 inspect | Ctrl+Alt+Esc exit`nCompleted reel cycles: ' catches, 20, 60
+    ToolTip 'Fishing | ' phase '`n' detail '`nF6 start/pause | F7 stop | F8 inspect | F10 history | Ctrl+Alt+Esc exit`nCompleted reel cycles: ' catches, 20, 60
 }
 Inspect() {
     global hwnd, detail

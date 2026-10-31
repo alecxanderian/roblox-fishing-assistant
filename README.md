@@ -7,7 +7,7 @@ mouse clicks and delays. Tooltips display the current stage and diagnostics.
 ## Run
 
 Launch `Fishing.exe`, or install AutoHotkey v2 and run `Fishing.ahk`.
-Keep `Fishing.ini` beside the application. Open the fishing panel in Roblox
+Keep `Fishing.ini` and `CatchLogger.ps1` beside the application. Open the fishing panel in Roblox
 with **E**, then press **F6**. Keep Roblox in the foreground.
 
 | Key | Action |
@@ -16,6 +16,7 @@ with **E**, then press **F6**. Keep Roblox in the foreground.
 | F7 | Stop and release the mouse |
 | F8 | Inspect pixel detection |
 | F9 | Manually start combat recovery |
+| F10 | Open persistent catch history |
 | Ctrl+Alt+Esc | Exit |
 
 The application stops if Roblox loses focus or a stage times out.
@@ -47,6 +48,42 @@ resumes attack clicks. It resumes fishing only after detecting the panel.
 `TimeoutMs=45000` stops an encounter that cannot be recovered.
 F7 and focus-loss handling release both the mouse and the interaction key.
 
+## Catch history and Discord
+
+Each reel result queues a crop of the central reward card. A separate Windows
+PowerShell worker uses built-in Windows OCR to read the catch name and weight,
+then saves the event before attempting a Discord delivery. Reeling does not
+wait for OCR or the network. Fish, non-fish rewards, and readable encounters
+are recorded separately from unreadable results; unreadable text is never
+invented as a catch name.
+
+Press **F10** to view catches, weights, times, reel durations, and delivery
+status. Opening history takes focus and pauses active fishing; close it and
+press F6 in Roblox to resume. `CatchHistory.tsv` is a tab-separated export,
+and `catches/` contains each event's JSON and reward images. These files persist
+between sessions and are excluded from Git. Unsaved queued events are processed
+on the next application launch.
+
+To enable Discord, copy `Fishing.secrets.example.ini` to
+`Fishing.secrets.ini` and set `WebhookURL` in its `[Discord]` section.
+The secrets file is excluded from Git and is not embedded in the executable.
+With no webhook configured, local history still works. Notifications contain
+the parsed catch details and, by default, a reward-card image. No full desktop
+or Discord screenshots are uploaded. Set `[History] IncludeRewardImage=0` to
+send text only, or `Enabled=0` to disable catch capture.
+
+The worker uses Windows PowerShell 5.1, Windows OCR, and an installed English
+OCR language; no Python installation or bot token is required. It honors
+Discord rate-limit responses, records delivery failures locally, and does not
+automatically repost persisted events after an ambiguous network failure.
+
+```text
+powershell.exe -NoProfile -File CatchLogger.ps1 -TestWebhook
+powershell.exe -NoProfile -File tests/Test-CatchParser.ps1
+```
+
+The first command sends a clearly labelled connection test, not a catch.
+
 The profile was tuned for a 1920 × 1008 client area. Different UI scaling,
 aspect ratios, themes, or rod interfaces may require calibration.
 The completed-cycle counter does not verify a fish reward; check the game's
@@ -63,6 +100,11 @@ Snapper / River Snapper encounter was also captured: the fishing panel closed,
 the application attacked, the snapper disappeared, and held E restored fishing.
 It caught a Grass Carp immediately afterward. Enemy target-bar detection uses
 that captured snapper interface; other enemy interfaces may need calibration.
+
+Catch logging was live-tested with fish weights, a new-record reward, and a
+non-fish purse reward. Local history, Discord embeds with reward images, and
+duplicate-event suppression were verified. Parser regression checks cover
+ordinary fish, record messages, missing weights, encounters, and non-reward text.
 
 ```text
 AutoHotkey64.exe /ErrorStdOut Fishing.ahk --check
