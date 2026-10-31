@@ -1,0 +1,8 @@
+# Local diagnostics and analysis assets
+*.log
+/tools/
+/cast.png
+/contact.jpg
+/reel.png
+/reference.png
+/sequence.jpg
