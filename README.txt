@@ -7,6 +7,7 @@ Keep Roblox in the foreground and the fishing panel unobstructed.
 F6             Start / pause
 F7             Stop and release the mouse
 F8             Show pixel detection diagnostics in the tooltip and log
+F9             Manually start combat recovery
 Ctrl+Alt+Esc   Exit and release the mouse
 
 The tooltip shows the current stage, detected tension marker, panel colors,
@@ -19,12 +20,23 @@ gaps based on the white tension marker. It repeats after a reel cycle ends.
 It stops automatically if Roblox loses focus or a stage times out.
 
 Fishing.ini settings (restart the script after editing):
-PulseMs          Mouse-down duration of each reel click (default 32 ms).
-MinimumGapMs     Minimum time between the starts of reel clicks (65 ms).
-SlackTarget      Click below this fraction of the tension bar (0.045).
+PulseMs          Maximum mouse-down duration per reel click (default 75 ms).
+MinimumGapMs     Minimum time between the starts of reel clicks (90 ms).
+SlackTarget      Click below this tension fraction; release at the limit (0.065).
                  Lower it to reduce tension; increase slightly if too slack.
 CastTarget       Release at this fraction of the casting bar (0.93).
 Repeat           1 repeats; 0 stops after a single reel cycle.
+
+Combat settings:
+Enabled          1 enables recovery after a panel interruption or health loss.
+ClickIntervalMs  Time between attack clicks (120 ms).
+ReturnProbeMs    Attack-burst duration before waiting for combat clear (6000 ms).
+TimeoutMs        Stop if recovery is not confirmed within this time (45000 ms).
+The application resumes fishing only after detecting the fishing panel again.
+It pauses attacks while retrying held E so the combat lock can expire.
+It keeps attacking if the red target-health bar is still visible.
+New health loss resumes attack clicks during this quiet period.
+Stopping, exiting, or losing focus releases both left click and E.
 
 The initial profile comes from the supplied 1920 x 1008 recording and the
 current maximized Roblox window. It scales with client dimensions, but a
@@ -41,4 +53,6 @@ AutoHotkey64.exe /ErrorStdOut Fishing.ahk --check
 AutoHotkey64.exe /ErrorStdOut Fishing.ahk --test
 --check validates loading without running the automation.
 --test activates Roblox, attempts a held E interaction if the panel is absent,
-starts the automation, and exits after 35 seconds.
+starts the automation, and exits after 35 seconds. Supply a second argument
+to change the test duration, up to 900 seconds: Fishing.ahk --test 600.
+--run starts immediately without a test timeout. Normal launch waits for F6.
