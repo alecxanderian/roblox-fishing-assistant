@@ -121,24 +121,34 @@ function Read-Reward([string]$Path) {
     if ($lines.Count -gt 0 -and $weightLines.Count -gt 0) {
         $lines = @($lines[0]) + $weightLines + @($lines | Select-Object -Skip 1)
     }
-    return @{ Lines = $lines; Text = ($lines -join "`n"); Image = $png }
+    $cardLines = @(Recognize-Image $png)
+    return @{ Lines = $lines; CardLines=$cardLines; Text = ($lines -join "`n"); Image = $png }
 }
-function Parse-Reward([string[]]$Lines) {
+function Parse-Reward([string[]]$Lines, [bool]$EncounterDetected=$false) {
     $text = $Lines -join "`n"
+    if ($EncounterDetected -or $text -match "(?i)that's no fish|comes up the line") {
+        $title = @($Lines | Where-Object { $_ -match '[A-Za-z]{3}' -and $_.Length -le 100 } | Select-Object -First 1)
+        $name = if ($title.Count) { ($title[0] -replace '^[^A-Za-z]+', '').Trim() } else { 'Fishing encounter' }
+        return @{Type='Encounter';Name=$name;Weight='';Verified=$true}
+    }
     for ($i = 0; $i -lt $Lines.Count; $i++) {
         if ($Lines[$i] -match '^\s*(\d+(?:[.,]\d+)?)\s*(?:jin|jln|in)\b' -and $i -gt 0) {
             $weight = $matches[1].Replace(',', '.') + ' jin'
-            $name = $Lines[$i-1] -replace '^[^A-Za-z]+', ''
-            $name = $name -creplace '([a-z])([A-Z])', '$1 $2'
-            if ($name.Length -ge 3 -and $name.Length -le 80) {
-                return @{ Type='Fish'; Name=$name.Trim(); Weight=$weight; Verified=$true }
+            for ($titleIndex=0; $titleIndex -lt $i; $titleIndex++) {
+                $candidate = $Lines[$titleIndex]
+                if ($candidate -match '^\s*\d' -or $candidate -match '(?i)^(jin|jln|in)$|angler\s+xp') { continue }
+                $name = $candidate -replace '^[^A-Za-z]+', ''
+                $name = $name -creplace '([a-z])([A-Z])', '$1 $2'
+                if ($name.Length -ge 3 -and $name.Length -le 80) {
+                    return @{ Type='Fish'; Name=$name.Trim(); Weight=$weight; Verified=$true }
+                }
             }
         }
     }
     if ($text -match '(?i)iron.shell snapper|comes up after you|river snapper') {
         return @{ Type='Encounter'; Name='River Snapper'; Weight=''; Verified=$true }
     }
-    if ($text -match '(?i)\+?\d+\s+angler\s+xp' -and $Lines.Count -gt 1) {
+    if ($text -match '(?i)\+?\d+\s+(?:angler\s+xp|angleo)' -and $Lines.Count -gt 1) {
         $name = $Lines[0] -replace '^[^A-Za-z]+', ''
         if ($name.Length -ge 3 -and $name.Length -le 80 -and $name -notmatch '(?i)angler\s+xp') {
             return @{Type='Catch';Name=$name.Trim();Weight='Not read';Verified=$true}
@@ -232,7 +242,11 @@ try {
     }
     if ($OcrOnly) {
         $reward = Read-Reward $ImagePath
-        @{Ocr=$reward.Text; Parsed=(Parse-Reward $reward.Lines)} | ConvertTo-Json -Depth 4
+        $cardText = $reward.CardLines -join ' '
+        $parsed = if ($cardText -match "(?i)that's no fish|comes up the line|comes up after you") {
+            Parse-Reward $reward.CardLines $true
+        } else { Parse-Reward $reward.Lines }
+        @{Ocr=$reward.Text; CardOcr=($reward.CardLines -join "`n"); Parsed=$parsed} | ConvertTo-Json -Depth 4
         exit 0
     }
     if ($TestWebhook) {
@@ -259,7 +273,12 @@ try {
     $stage = 'OCR'
     try {
         $reward = Read-Reward $job['ImagePath']
-        $parsed = Parse-Reward $reward.Lines
+        $cardText = $reward.CardLines -join ' '
+        if ($job['EncounterDetected'] -eq '1' -or $cardText -match "(?i)that's no fish|comes up the line|comes up after you") {
+            $parsed = Parse-Reward $reward.CardLines $true
+        } else {
+            $parsed = Parse-Reward $reward.Lines
+        }
     } catch {
         $reward = @{Image=$job['ImagePath'];Text='OCR unavailable ('+$_.Exception.GetType().Name+')'}
         $parsed = @{Type='Unreadable';Name='Reward not confidently read';Weight='';Verified=$false}

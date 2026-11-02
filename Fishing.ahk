@@ -4,10 +4,8 @@
 Persistent
 SetWorkingDir A_ScriptDir
 CoordMode 'Pixel', 'Screen'
-CoordMode 'Mouse', 'Screen'
 CoordMode 'ToolTip', 'Screen'
 SendMode 'Event'
-SetMouseDelay -1
 SetKeyDelay -1
 
 ; Coordinates scale from the supplied 1920 x 1008 client recording.
@@ -24,14 +22,15 @@ global repeatCast := Integer(IniRead(settings, 'Control', 'Repeat', 1))
 global stopAfter := 0
 global maxProgress := 0, reelStarted := 0, markerAt := 0
 global combatEnabled := Integer(IniRead(settings, 'Combat', 'Enabled', 1))
-global combatGapMs := Max(70, Integer(IniRead(settings, 'Combat', 'ClickIntervalMs', 120)))
+global combatGapMs := Max(70, Integer(IniRead(settings, 'Combat', 'AttackIntervalMs', IniRead(settings, 'Combat', 'ClickIntervalMs', 120))))
 global combatTimeoutMs := Integer(IniRead(settings, 'Combat', 'TimeoutMs', 45000))
 global combatProbeMs := Integer(IniRead(settings, 'Combat', 'ReturnProbeMs', 6000))
-global combatStarted := 0, lastAttack := 0, interactHeld := false, cancelHeld := false, lastDamageAt := 0
-global healthAt := 0, previousHealth := -1, lastReelEnd := 0
+global combatStarted := 0, lastAttack := 0, rodHeld := false, attackHeld := false, cancelHeld := false, lastDamageAt := 0
+global healthAt := 0, previousHealth := -1, lastReelEnd := 0, rodLostAt := 0
 global captureEncounters := A_Args.Length >= 2 && A_Args[2] = '--capture-encounters'
 global historyEnabled := Integer(IniRead(settings, 'History', 'Enabled', 1))
 global historyImages := Integer(IniRead(settings, 'History', 'IncludeRewardImage', 1))
+global testRodLoss := A_Args.Length >= 3 && A_Args[3] = '--test-rod-loss'
 global captureSequence := 0, historyGui := 0, historyList := 0
 OnExit((*) => ReleaseAll())
 SetTimer Tick, 15
@@ -71,22 +70,11 @@ ManualCombat() {
 }
 
 BeginTest() {
-    global hwnd, combatStarted
+    global hwnd
     hwnd := WinActive('ahk_exe RobloxPlayerBeta.exe')
     if !hwnd
         return
-    o := Observe(Geometry())
-    if !o.gold && !o.blue && !o.red {
-        SendEvent '{e down}'
-        Sleep 1000
-        SendEvent '{e up}'
-        Sleep 700
-    }
     Toggle()
-    if !Observe(Geometry()).panel {
-        combatStarted := A_TickCount
-        SetPhase('Waiting for combat clear')
-    }
 }
 
 Log(msg) {
@@ -128,6 +116,7 @@ CaptureCatch() {
         IniWrite Round(Max(0, A_TickCount-reelStarted-600)/1000, 2), job, 'Catch', 'ReelSeconds'
         IniWrite historyImages, job, 'Catch', 'IncludeImage'
         IniWrite Round(maxProgress*100), job, 'Catch', 'MaxProgress'
+        IniWrite !Observe(g).panel && EnemyVisible(g), job, 'Catch', 'EncounterDetected'
         command := '"' A_WinDir '\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -File "'
             . helper '" -JobPath "' job '"'
         Run command, A_ScriptDir, 'Hide'
@@ -210,18 +199,57 @@ RefreshHistory() {
 Release() {
     global held
     if held {
-        SendEvent '{LButton up}'
+        SendEvent '{e up}'
         held := false
     }
 }
 ReleaseAll() {
-    global interactHeld
     Release()
+    ReleaseAttack()
     ReleaseCancel()
-    if interactHeld {
-        SendEvent '{e up}'
-        interactHeld := false
+    ReleaseRod()
+}
+ReleaseRod() {
+    global rodHeld
+    if rodHeld {
+        SendEvent '{9 up}'
+        rodHeld := false
     }
+}
+ReleaseAttack() {
+    global attackHeld
+    if attackHeld {
+        SendEvent '{t up}'
+        attackHeld := false
+    }
+}
+AttackPulse() {
+    global attackHeld, lastAttack, hwnd
+    if !WinActive('ahk_id ' hwnd)
+        return
+    SendEvent '{t down}'
+    attackHeld := true
+    lastAttack := A_TickCount
+    SetTimer ReleaseAttack, -40
+}
+EquipRod() {
+    global rodHeld, hwnd
+    if !WinActive('ahk_id ' hwnd)
+        return
+    Release()
+    ReleaseAttack()
+    SendEvent '{9 down}'
+    rodHeld := true
+    Log('ROD equipping with keyboard slot 9')
+    SetPhase('Equipping rod')
+}
+CheckRod(reason) {
+    global combatStarted, rodLostAt
+    ReleaseAll()
+    combatStarted := A_TickCount
+    rodLostAt := 0
+    Log('ROD checking: ' reason)
+    SetPhase('Checking rod')
 }
 ReleaseCancel() {
     global cancelHeld
@@ -245,7 +273,7 @@ BeginCombat(closePanel := false, reason := 'fishing panel closed after reel') {
         cancelHeld := true
         SetTimer ReleaseCancel, -100
     }
-    Log('COMBAT ' reason '; attacking and checking for return')
+    Log('COMBAT ' reason '; artifact volley on T; no mouse input')
     SetPhase('Combat')
 }
 ReadHealth(g) {
@@ -260,6 +288,14 @@ EnemyVisible(g) {
     mid := g.x+g.w/2
     return FindColor(&ex, &ey, mid-182*g.s, g.y+150*g.s,
         mid+182*g.s, g.y+166*g.s, 0xD84D44, 30)
+}
+EncounterVisible(g) {
+    if EnemyVisible(g)
+        return true
+    ; Enemy introductions have red titles in the central reward card.
+    mid := g.x+g.w/2
+    return FindColor(&ex, &ey, mid-180*g.s, g.y+g.h*0.27,
+        mid+180*g.s, g.y+g.h*0.35, 0xD95040, 30)
 }
 SetPhase(name) {
     global phase, since, detail, previousMarker, maxProgress, reelStarted, markerAt, lostAt
@@ -276,7 +312,7 @@ Stop(reason := 'Stopped') {
     ShowTip(true)
 }
 Toggle() {
-    global running, hwnd, floatBase, lostAt
+    global running, hwnd, floatBase, lostAt, combatStarted
     if running {
         Stop('Paused')
         return
@@ -286,7 +322,7 @@ Toggle() {
         ToolTip 'Focus Roblox, then press F6.', 20, 60
         return
     }
-    running := true, floatBase := 0, lostAt := 0
+    running := true, floatBase := 0, lostAt := 0, combatStarted := A_TickCount
     SetPhase('Detecting')
 }
 Geometry() {
@@ -334,7 +370,7 @@ Pulse(durationMs := 0) {
     global held, lastClick, pulseMs
     if !WinActive('ahk_exe RobloxPlayerBeta.exe')
         return
-    SendEvent '{LButton down}'
+    SendEvent '{e down}'
     held := true, lastClick := A_TickCount
     SetTimer Release, -Max(10, durationMs ? durationMs : pulseMs)
 }
@@ -343,8 +379,8 @@ Tick() {
     global lastClick, gapMs, slackTarget, castTarget, repeatCast, catches, stopAfter
     global previousMarker
     global maxProgress, reelStarted, markerAt
-    global combatStarted, lastAttack, combatGapMs, combatTimeoutMs, combatProbeMs, interactHeld
-    global healthAt, previousHealth, lastReelEnd, lastDamageAt
+    global combatStarted, lastAttack, combatGapMs, combatTimeoutMs, combatProbeMs, rodHeld, attackHeld
+    global healthAt, previousHealth, lastReelEnd, lastDamageAt, rodLostAt, testRodLoss
     if stopAfter && A_TickCount >= stopAfter {
         Stop('Test finished')
         ExitApp()
@@ -357,10 +393,20 @@ Tick() {
     }
     try {
         g := Geometry(), o := Observe(g), elapsed := A_TickCount-since
-        inCombat := phase = 'Combat' || phase = 'Reopening fishing'
-            || phase = 'Checking fishing return' || phase = 'Waiting for combat clear'
+        ; Live regression test: reproduce the rod being put away while waiting.
+        if testRodLoss && phase = 'Waiting for bite' && o.panel && elapsed >= 700 {
+            testRodLoss := false
+            SendEvent '{9 down}'
+            rodHeld := true
+            SetTimer ReleaseRod, -100
+            Log('TEST putting rod away during bite wait to verify automatic recovery')
+            return
+        }
+        inCombat := phase = 'Combat' || phase = 'Equipping rod'
+            || phase = 'Checking rod' || phase = 'Checking fishing return' || phase = 'Waiting for combat clear'
         if inCombat && A_TickCount-combatStarted >= combatTimeoutMs {
-            Stop('Combat recovery timed out; check player')
+            Stop(phase = 'Combat' ? 'Combat recovery timed out; check player'
+                : 'Rod recovery timed out; check position and rod slot 9')
             return
         }
         if A_TickCount-healthAt >= 500 {
@@ -389,11 +435,25 @@ Tick() {
         }
         detail := Format('Marker: {} | blue {} | gold {} | float Y {}',
             o.marker < 0 ? '?' : Round(o.marker*100) '%', o.blue, o.gold, o.redY)
-        if phase = 'Detecting' {
-            if !o.panel && lastReelEnd && A_TickCount-lastReelEnd < 20000 && elapsed > 500 {
-                BeginCombat()
-                return
+        watchRod := phase = 'Ready to cast' || phase = 'Casting' || phase = 'Cast settling'
+            || phase = 'Waiting for bite' || phase = 'Hooking'
+        if o.panel
+            rodLostAt := 0
+        else if watchRod {
+            Release()
+            if !rodLostAt
+                rodLostAt := A_TickCount
+            detail := 'Fishing panel lost; checking rod availability'
+            if A_TickCount-rodLostAt >= 650 {
+                if EncounterVisible(g)
+                    BeginCombat(false, 'enemy detected after fishing panel disappeared')
+                else
+                    CheckRod('fishing panel disappeared during ' phase)
             }
+            ShowTip()
+            return
+        }
+        if phase = 'Detecting' {
             if o.blue
                 SetPhase('Reeling')
             else if o.gold
@@ -401,15 +461,22 @@ Tick() {
             else if o.red {
                 floatBase := o.redY
                 SetPhase('Waiting for bite')
-            } else if elapsed > 5000
-                Stop('Fishing panel not found: open it with E, then F6')
+            } else if elapsed > 500
+                CheckRod('start or resume fishing')
+        } else if phase = 'Checking rod' {
+            if o.panel {
+                Log('ROD confirmed out; fishing panel present')
+                SetPhase('Detecting')
+            } else if EncounterVisible(g) {
+                BeginCombat(false, 'enemy detected during rod check')
+            } else if elapsed >= 300
+                EquipRod()
         } else if phase = 'Ready to cast' {
             if !o.gold {
                 SetPhase('Detecting')
             } else {
-                ; A fixed, unobstructed point in the water, away from panel buttons.
-                MouseMove Round(g.x+g.w*0.60), Round(g.y+g.h*0.50), 0
-                SendEvent '{LButton down}'
+                ; E is supported by the minigame and preserves the mounted state.
+                SendEvent '{e down}'
                 held := true
                 SetPhase('Casting')
             }
@@ -457,8 +524,8 @@ Tick() {
                 maxProgress := Max(maxProgress, o.progress)
                 detail .= ' | progress ' Round(o.progress*100) '%'
                 if o.marker >= 0 {
-                    ; Longer pulses increase time spent reeling. Predict only the
-                    ; next 30 ms, and cut a pulse short at the blue-zone limit.
+                    ; Longer E pulses increase time spent reeling. Predict only
+                    ; the next 30 ms, releasing at the blue-zone limit.
                     rising := previousMarker >= 0 ? Max(0, o.marker-previousMarker) : 0
                     sampleMs := markerAt ? Max(15, A_TickCount-markerAt) : 30
                     predicted := o.marker + rising*30/sampleMs
@@ -486,58 +553,52 @@ Tick() {
             if elapsed > 90000
                 Stop('Reel timed out')
         } else if phase = 'Catch finished' {
-            if !o.panel && elapsed > 500 {
-                BeginCombat()
+            if !o.panel && elapsed > 500 && EncounterVisible(g) {
+                BeginCombat(false, 'enemy detected after catch')
                 return
             }
             ; Wait out the Landed message before the next cast.
             if elapsed > 2400 {
                 if repeatCast
-                    SetPhase('Detecting')
+                    CheckRod('after catch')
                 else
                     Stop('Single catch finished')
             }
         } else if phase = 'Combat' {
-            detail := 'Attacking | checking fishing return every ' Round(combatProbeMs/1000) 's'
+            detail := 'Artifact volley: T | restore rod: 9 | keyboard only'
             if A_TickCount-combatStarted >= combatTimeoutMs {
                 Stop('Combat recovery timed out; check player')
             } else if o.panel && elapsed >= 1000 {
                 ReleaseAll()
-                Log('COMBAT fishing panel restored')
-                SetPhase('Detecting')
+                CheckRod('after combat; fishing panel restored')
             } else if elapsed >= combatProbeMs && !EnemyVisible(g) {
-                Release()
+                ReleaseAttack()
                 SetPhase('Waiting for combat clear')
-            } else if A_TickCount-lastAttack >= combatGapMs && !held {
-                Pulse(25)
-                lastAttack := A_TickCount
+            } else if A_TickCount-lastAttack >= combatGapMs && !attackHeld {
+                AttackPulse()
             }
-        } else if phase = 'Reopening fishing' {
-            if elapsed >= 1000 {
-                SendEvent '{e up}'
-                interactHeld := false
+        } else if phase = 'Equipping rod' {
+            if elapsed >= 100 {
+                ReleaseRod()
                 SetPhase('Checking fishing return')
             }
         } else if phase = 'Checking fishing return' {
             if o.panel {
-                Log('COMBAT return confirmed by fishing panel')
+                Log('ROD confirmed out after equipping slot 9')
                 SetPhase('Detecting')
-            } else if EnemyVisible(g) || lastDamageAt > since {
+            } else if EncounterVisible(g) || lastDamageAt > since {
                 SetPhase('Combat')
-            } else if elapsed >= 700
+            } else if elapsed >= 1200
                 SetPhase('Waiting for combat clear')
         } else if phase = 'Waiting for combat clear' {
-            detail := 'Attack paused to clear combat lock; retrying held E'
+            detail := 'Volley paused to clear combat lock; retrying rod slot 9'
             if o.panel {
-                Log('COMBAT return confirmed after combat lock cleared')
-                SetPhase('Detecting')
-            } else if EnemyVisible(g) || lastDamageAt > since {
+                CheckRod('after combat lock cleared')
+            } else if EncounterVisible(g) || lastDamageAt > since {
                 Log('COMBAT damage during quiet period; resuming attacks')
                 SetPhase('Combat')
             } else if elapsed >= 2000 {
-                SendEvent '{e down}'
-                interactHeld := true
-                SetPhase('Reopening fishing')
+                EquipRod()
             }
         }
         ShowTip()

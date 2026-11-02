@@ -13,6 +13,9 @@ $cases = @(
     @{Lines=@('Snakehead','+28 angler xp');Type='Catch';Name='Snakehead';Weight='Not read'},
     @{Lines=@('Iron-Shell Snapper','The water heaves. A snapper comes up after you!');Type='Encounter';Name='River Snapper';Weight=''},
     @{Lines=@('Hold to swing back','Let go in the gold');Type='Unreadable';Name='Reward not confidently read';Weight=''}
+    @{Lines=@('Reeves shad','1 6 jin','1.6 jin','+52 angleo');Type='Fish';Name='Reeves shad';Weight='1.6 jin'},
+    @{Lines=@('Cold-Water Lenok','428 angleo');Type='Catch';Name='Cold-Water Lenok';Weight='Not read'},
+    @{Lines=@('Water Ghoul',"That's no fish. A drowned thing comes up the line!");Type='Encounter';Name='Water Ghoul';Weight=''}
 )
 foreach ($case in $cases) {
     $actual = Parse-Reward $case.Lines
@@ -21,3 +24,8 @@ foreach ($case in $cases) {
     }
 }
 Write-Output ($cases.Count.ToString()+' reward parser checks passed.')
+$newEncounter = Parse-Reward @('Gorge Ambusher','A creature emerges from the gorge.') $true
+if ($newEncounter.Type -ne 'Encounter' -or $newEncounter.Name -cne 'Gorge Ambusher') {
+    throw 'A new enemy title must not be forced to River Snapper'
+}
+Write-Output 'Generic encounter title check passed.'
