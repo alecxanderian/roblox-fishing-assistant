@@ -34,6 +34,15 @@ off. Enemy health bars or red encounter introductions route to T combat instead;
 ordinary movement or rod stowing does not trigger attack spam. Rod recovery
 starts a fresh timeout, rather than inheriting an old combat timer.
 
+Sunken Coffers are identified from the complete reward image and logged as
+`Sunken Coffer`, with the image attached to Discord when reward images are enabled.
+Before the next cast, the app puts the rod away with 9, holds E for two seconds
+to open the nearby Iron-Bound Chest, then taps E for four seconds to collect
+its drops. It checks and restores the rod afterward. Stay within interaction
+range of the chest; the app does not move the player toward it.
+The `[Coffer]` settings are `Enabled=1`, `OpenHoldMs=2000`, and
+`PickupDurationMs=4000` (minimum four seconds). F7 and focus loss release E.
+
 ## Settings
 
 Edit `Fishing.ini`, then restart the application.
@@ -65,7 +74,10 @@ F7, exit, and focus-loss handling release E, T, 9, and the fishing cancel key.
 Each reel result queues a crop of the central reward card. A separate Windows
 PowerShell worker uses built-in Windows OCR to read the catch name and weight,
 then saves the event before attempting a Discord delivery. Reeling does not
-wait for OCR or the network. Fish, non-fish rewards, and readable encounters
+wait for the network. Before casting again, coffer handling waits for OCR,
+which publishes its result before history or webhook processing. An OCR timeout
+stops fishing after 12 seconds so a potential chest is not silently skipped.
+Fish, non-fish rewards, and readable encounters
 are recorded separately from unreadable results; unreadable text is never
 invented as a catch name.
 
@@ -82,7 +94,8 @@ The secrets file is excluded from Git and is not embedded in the executable.
 With no webhook configured, local history still works. Notifications contain
 the parsed catch details and, by default, a reward-card image. No full desktop
 or Discord screenshots are uploaded. Set `[History] IncludeRewardImage=0` to
-send text only, or `Enabled=0` to disable catch capture.
+send text only, or `Enabled=0` to disable history and webhook delivery. Reward
+images are still read locally while coffer handling is enabled.
 
 The worker uses Windows PowerShell 5.1, Windows OCR, and an installed English
 OCR language; no Python installation or bot token is required. It honors

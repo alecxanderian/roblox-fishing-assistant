@@ -7,6 +7,7 @@ if ($parseErrors.Count) { throw 'CatchLogger.ps1 has syntax errors' }
 $function = $tree.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Parse-Reward'}, $true)
 . ([scriptblock]::Create($function.Extent.Text))
 $cases = @(
+    @{Lines=@('A sunken coffer',"A sunken coffer, still shut. It's on the bank beside you.",'+20 angler xp');Type='Coffer';Name='Sunken Coffer';Weight=''},
     @{Lines=@('Reeves Shad','1.7 jin - a new record','+52 angler xp');Type='Fish';Name='Reeves Shad';Weight='1.7 jin'},
     @{Lines=@('Grass Carp','2.1 jin','+16 angler xp');Type='Fish';Name='Grass Carp';Weight='2.1 jin'},
     @{Lines=@('Mandarin Fish','2,0 JIN','+28 angler xp');Type='Fish';Name='Mandarin Fish';Weight='2.0 jin'},

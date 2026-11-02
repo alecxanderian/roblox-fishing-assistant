@@ -32,6 +32,10 @@ global historyEnabled := Integer(IniRead(settings, 'History', 'Enabled', 1))
 global historyImages := Integer(IniRead(settings, 'History', 'IncludeRewardImage', 1))
 global testRodLoss := A_Args.Length >= 3 && A_Args[3] = '--test-rod-loss'
 global captureSequence := 0, historyGui := 0, historyList := 0
+global rewardResult := '', rewardDone := false
+global cofferEnabled := Integer(IniRead(settings, 'Coffer', 'Enabled', 1))
+global chestHoldMs := Max(1500, Integer(IniRead(settings, 'Coffer', 'OpenHoldMs', 2000)))
+global lootDurationMs := Max(4000, Integer(IniRead(settings, 'Coffer', 'PickupDurationMs', 4000)))
 OnExit((*) => ReleaseAll())
 SetTimer Tick, 15
 ToolTip 'Fishing ready | F6 start/pause | F7 stop | F10 history', 20, 60
@@ -91,7 +95,8 @@ ResumeHistory() {
 }
 CaptureCatch() {
     global historyEnabled, historyImages, hwnd, captureSequence, reelStarted, maxProgress
-    if !historyEnabled || !WinActive('ahk_id ' hwnd)
+    global rewardResult, rewardDone, cofferEnabled
+    if (!historyEnabled && !cofferEnabled) || !WinActive('ahk_id ' hwnd)
         return
     try {
         helper := A_ScriptDir '\CatchLogger.ps1'
@@ -109,12 +114,15 @@ CaptureCatch() {
         SaveScreenBmp(picture, Round(g.x+g.w/2-210*g.s), Round(g.y+g.h*0.25),
             Round(420*g.s), Round(g.h*0.20))
         job := folder '\' id '.ini'
+        rewardResult := folder '\' id '.result.ini'
+        rewardDone := false
         IniWrite id, job, 'Catch', 'Id'
         IniWrite FormatTime(A_NowUTC, "yyyy-MM-dd'T'HH:mm:ss'Z'"), job, 'Catch', 'TimestampUtc'
         IniWrite FormatTime(, 'yyyy-MM-dd HH:mm:ss'), job, 'Catch', 'LocalTime'
         IniWrite picture, job, 'Catch', 'ImagePath'
         IniWrite Round(Max(0, A_TickCount-reelStarted-600)/1000, 2), job, 'Catch', 'ReelSeconds'
         IniWrite historyImages, job, 'Catch', 'IncludeImage'
+        IniWrite historyEnabled, job, 'Catch', 'LogHistory'
         IniWrite Round(maxProgress*100), job, 'Catch', 'MaxProgress'
         IniWrite !Observe(g).panel && EnemyVisible(g), job, 'Catch', 'EncounterDetected'
         command := '"' A_WinDir '\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -File "'
@@ -381,6 +389,7 @@ Tick() {
     global maxProgress, reelStarted, markerAt
     global combatStarted, lastAttack, combatGapMs, combatTimeoutMs, combatProbeMs, rodHeld, attackHeld
     global healthAt, previousHealth, lastReelEnd, lastDamageAt, rodLostAt, testRodLoss
+    global rewardResult, rewardDone, cofferEnabled, chestHoldMs, lootDurationMs
     if stopAfter && A_TickCount >= stopAfter {
         Stop('Test finished')
         ExitApp()
@@ -544,6 +553,7 @@ Tick() {
                 if A_TickCount-lostAt > 600 {
                     catches += 1
                     lastReelEnd := A_TickCount
+                    rewardResult := '', rewardDone := false
                     Log('REEL ended; maximum green progress=' Round(maxProgress*100)
                         '%; duration=' Round(Max(0, A_TickCount-reelStarted-600)/1000, 2) 's')
                     SetPhase('Catch finished')
@@ -557,6 +567,31 @@ Tick() {
                 BeginCombat(false, 'enemy detected after catch')
                 return
             }
+            ; OCR reads the complete reward card, including coffer titles to the left.
+            if cofferEnabled && !rewardDone {
+                if rewardResult != '' && FileExist(rewardResult) {
+                    rewardType := IniRead(rewardResult, 'Reward', 'Type', '')
+                    rewardDone := true
+                    if rewardType = 'Coffer' {
+                        ReleaseAll()
+                        SetTimer Release, 0
+                        Log('COFFER Sunken Coffer identified from reward image')
+                        if o.panel {
+                            SendEvent '{9 down}'
+                            rodHeld := true
+                        }
+                        SetPhase('Stowing rod for coffer')
+                        return
+                    }
+                } else if elapsed > 12000 {
+                    Stop('Reward OCR timed out; inspect catch before resuming')
+                    return
+                } else {
+                    detail := 'Identifying catch image before next cast'
+                    ShowTip()
+                    return
+                }
+            }
             ; Wait out the Landed message before the next cast.
             if elapsed > 2400 {
                 if repeatCast
@@ -564,6 +599,34 @@ Tick() {
                 else
                     Stop('Single catch finished')
             }
+        } else if phase = 'Stowing rod for coffer' {
+            if elapsed >= 100
+                ReleaseRod()
+            if elapsed >= 600 {
+                if o.panel {
+                    Stop('Coffer: rod is still out; check slot 9')
+                    return
+                }
+                SendEvent '{e down}'
+                held := true
+                Log('COFFER holding E to open Iron-Bound Chest')
+                SetPhase('Opening coffer')
+            }
+        } else if phase = 'Opening coffer' {
+            detail := 'Holding E to open Iron-Bound Chest'
+            if elapsed >= chestHoldMs {
+                Release()
+                lastClick := A_TickCount
+                SetPhase('Collecting coffer loot')
+            }
+        } else if phase = 'Collecting coffer loot' {
+            detail := 'Tapping E for four seconds to collect chest drops'
+            if elapsed >= lootDurationMs {
+                ReleaseAll()
+                Log('COFFER pickup sequence completed; restoring fishing rod')
+                CheckRod('after coffer loot')
+            } else if !held && A_TickCount-lastClick >= 100
+                Pulse(40)
         } else if phase = 'Combat' {
             detail := 'Artifact volley: T | restore rod: 9 | keyboard only'
             if A_TickCount-combatStarted >= combatTimeoutMs {

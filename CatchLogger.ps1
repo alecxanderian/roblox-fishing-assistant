@@ -126,6 +126,9 @@ function Read-Reward([string]$Path) {
 }
 function Parse-Reward([string[]]$Lines, [bool]$EncounterDetected=$false) {
     $text = $Lines -join "`n"
+    if ($text -match '(?i)\bsunken\s+coffer\b') {
+        return @{Type='Coffer';Name='Sunken Coffer';Weight='';Verified=$true}
+    }
     if ($EncounterDetected -or $text -match "(?i)that's no fish|comes up the line") {
         $title = @($Lines | Where-Object { $_ -match '[A-Za-z]{3}' -and $_.Length -le 100 } | Select-Object -First 1)
         $name = if ($title.Count) { ($title[0] -replace '^[^A-Za-z]+', '').Trim() } else { 'Fishing encounter' }
@@ -245,6 +248,7 @@ try {
         $cardText = $reward.CardLines -join ' '
         $parsed = if ($cardText -match "(?i)that's no fish|comes up the line|comes up after you") {
             Parse-Reward $reward.CardLines $true
+        } elseif ($cardText -match '(?i)\bsunken\s+coffer\b') { Parse-Reward $reward.CardLines
         } else { Parse-Reward $reward.Lines }
         @{Ocr=$reward.Text; CardOcr=($reward.CardLines -join "`n"); Parsed=$parsed} | ConvertTo-Json -Depth 4
         exit 0
@@ -262,10 +266,6 @@ try {
     $job = Read-Ini $JobPath
     if ($job['Id'] -notmatch '^[A-Za-z0-9_-]+$') { throw 'Invalid job identifier' }
     $recordPath = Join-Path $store ($job['Id']+'.json')
-    # Serialize workers so history projections and webhook ordering stay consistent.
-    $mutex = New-Object Threading.Mutex($false, 'Local\FishingAssistantCatchLogger')
-    $locked = $mutex.WaitOne(120000)
-    if (-not $locked) { throw 'History worker busy' }
     if (Test-Path -LiteralPath $recordPath) {
         # A persisted event is never reposted automatically after an ambiguous send.
         exit 0
@@ -276,6 +276,8 @@ try {
         $cardText = $reward.CardLines -join ' '
         if ($job['EncounterDetected'] -eq '1' -or $cardText -match "(?i)that's no fish|comes up the line|comes up after you") {
             $parsed = Parse-Reward $reward.CardLines $true
+        } elseif ($cardText -match '(?i)\bsunken\s+coffer\b') {
+            $parsed = Parse-Reward $reward.CardLines
         } else {
             $parsed = Parse-Reward $reward.Lines
         }
@@ -283,6 +285,17 @@ try {
         $reward = @{Image=$job['ImagePath'];Text='OCR unavailable ('+$_.Exception.GetType().Name+')'}
         $parsed = @{Type='Unreadable';Name='Reward not confidently read';Weight='';Verified=$false}
     }
+    # Publish gameplay detection before history projection or network I/O can block it.
+    $resultPath = [IO.Path]::ChangeExtension($JobPath, '.result.ini')
+    $resultTemp = $resultPath + '.' + $PID + '.tmp'
+    [IO.File]::WriteAllText($resultTemp, ("[Reward]`r`nType="+$parsed.Type+"`r`n"), $utf8)
+    Move-Item -LiteralPath $resultTemp -Destination $resultPath -Force
+    if ($job['LogHistory'] -eq '0') { exit 0 }
+    # Serialize persistence and webhook ordering, independently of gameplay detection.
+    $mutex = New-Object Threading.Mutex($false, 'Local\FishingAssistantCatchLogger')
+    $locked = $mutex.WaitOne(120000)
+    if (-not $locked) { throw 'History worker busy' }
+    if (Test-Path -LiteralPath $recordPath) { exit 0 }
     $record = [ordered]@{Id=$job['Id'];TimestampUtc=$job['TimestampUtc'];LocalTime=$job['LocalTime'];
         Type=$parsed.Type;Name=$parsed.Name;Weight=$parsed.Weight;Verified=$parsed.Verified;
         ReelSeconds=[double]::Parse($job['ReelSeconds'], [Globalization.CultureInfo]::InvariantCulture);

@@ -28,6 +28,14 @@ slot 9 to restore fishing, rather than waiting for the bite timer to expire.
 It does not toggle slot 9 when the panel is already visible. Detected enemy
 bars or encounter cards trigger T combat; rod loss alone does not.
 
+SUNKEN COFFERS
+The full catch image identifies Sunken Coffer for history and Discord.
+The app puts the rod away with 9, holds E to open the Iron-Bound Chest,
+then taps E for four seconds to collect drops before restoring the rod.
+Remain within range of the chest. The app does not move toward it.
+[Coffer] Enabled=1, OpenHoldMs=2000, PickupDurationMs=4000.
+An OCR timeout stops fishing after 12 seconds for inspection.
+
 Fishing.ini settings (restart the script after editing):
 PulseMs          Maximum E hold per reel pulse (default 75 ms).
 MinimumGapMs     Minimum time between E pulse starts (90 ms).
