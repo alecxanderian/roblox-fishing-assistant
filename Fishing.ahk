@@ -19,6 +19,12 @@ global gapMs := Integer(IniRead(settings, 'Control', 'MinimumGapMs', 90))
 global slackTarget := Float(IniRead(settings, 'Control', 'SlackTarget', 0.065))
 global castTarget := Float(IniRead(settings, 'Control', 'CastTarget', 0.93))
 global repeatCast := Integer(IniRead(settings, 'Control', 'Repeat', 1))
+global rodKey := IniRead(settings, 'Control', 'RodKey', '9')
+if !RegExMatch(rodKey, '^[0-9]$')
+    throw Error('RodKey must be a number-row key from 0 to 9')
+global uiScale := Float(IniRead(settings, 'Display', 'UiScale', 0))
+global panelOffset := Integer(IniRead(settings, 'Display', 'PanelOffsetY', 0))
+global controlGui := 0, statusLabel := 0
 global stopAfter := 0
 global maxProgress := 0, reelStarted := 0, markerAt := 0
 global combatEnabled := Integer(IniRead(settings, 'Combat', 'Enabled', 1))
@@ -41,6 +47,7 @@ SetTimer Tick, 15
 ToolTip 'Fishing ready | F6 start/pause | F7 stop | F10 history', 20, 60
 if A_Args.Length && A_Args[1] = '--check'
     ExitApp()
+CreateControls()
 if historyEnabled
     SetTimer ResumeHistory, -500
 if A_Args.Length && (A_Args[1] = '--test' || A_Args[1] = '--run') {
@@ -62,6 +69,34 @@ F8::Inspect()
 F9::ManualCombat()
 F10::ShowHistory()
 ^!Esc::ExitApp()
+
+CreateControls() {
+    global controlGui, statusLabel
+    controlGui := Gui('+AlwaysOnTop +ToolWindow', 'Fishing Assistant')
+    controlGui.SetFont('s9', 'Segoe UI')
+    statusLabel := controlGui.AddText('w260 h48', 'Ready - click Start')
+    controlGui.AddButton('w80', 'Start').OnEvent('Click', (*) => StartFromControls())
+    controlGui.AddButton('x+6 w80', 'Stop').OnEvent('Click', (*) => Stop('Stopped by button'))
+    controlGui.AddButton('x+6 w80', 'Exit').OnEvent('Click', (*) => ExitApp())
+    controlGui.OnEvent('Close', (*) => ExitApp())
+    ToolTip()
+    controlGui.Show('x10 y10 NoActivate')
+}
+StartFromControls() {
+    global running
+    if !WinExist('ahk_exe RobloxPlayerBeta.exe') {
+        Stop('Roblox is not open')
+        return
+    }
+    WinActivate 'ahk_exe RobloxPlayerBeta.exe'
+    if !running
+        SetTimer BeginTest, -300
+}
+RodDown() {
+    global rodKey, rodHeld
+    SendEvent '{' rodKey ' down}'
+    rodHeld := true
+}
 
 ManualCombat() {
     global running, hwnd
@@ -127,7 +162,7 @@ CaptureCatch() {
         IniWrite !Observe(g).panel && EnemyVisible(g), job, 'Catch', 'EncounterDetected'
         command := '"' A_WinDir '\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -File "'
             . helper '" -JobPath "' job '"'
-        Run command, A_ScriptDir, 'Hide'
+        Run A_ComSpec ' /d /s /c "' command ' > "' folder '\' id '.worker.log" 2>&1"', A_ScriptDir, 'Hide'
         Log('HISTORY reward queued: ' id)
     } catch as err {
         Log('HISTORY capture failed: ' err.Message ' at line ' err.Line)
@@ -218,9 +253,9 @@ ReleaseAll() {
     ReleaseRod()
 }
 ReleaseRod() {
-    global rodHeld
+    global rodHeld, rodKey
     if rodHeld {
-        SendEvent '{9 up}'
+        SendEvent '{' rodKey ' up}'
         rodHeld := false
     }
 }
@@ -246,9 +281,8 @@ EquipRod() {
         return
     Release()
     ReleaseAttack()
-    SendEvent '{9 down}'
-    rodHeld := true
-    Log('ROD equipping with keyboard slot 9')
+    RodDown()
+    Log('ROD equipping with configured keyboard slot')
     SetPhase('Equipping rod')
 }
 CheckRod(reason) {
@@ -292,12 +326,18 @@ ReadHealth(g) {
     return -1
 }
 EnemyVisible(g) {
+    global combatEnabled
+    if !combatEnabled
+        return false
     ; River Snapper reference: red target-health fill below the compass.
     mid := g.x+g.w/2
     return FindColor(&ex, &ey, mid-182*g.s, g.y+150*g.s,
         mid+182*g.s, g.y+166*g.s, 0xD84D44, 30)
 }
 EncounterVisible(g) {
+    global combatEnabled
+    if !combatEnabled
+        return false
     if EnemyVisible(g)
         return true
     ; Enemy introductions have red titles in the central reward card.
@@ -334,13 +374,15 @@ Toggle() {
     SetPhase('Detecting')
 }
 Geometry() {
-    global hwnd
+    global hwnd, uiScale, panelOffset
     WinGetClientPos &cx, &cy, &cw, &ch, 'ahk_id ' hwnd
     ; Roblox UI in this recording uses a centered panel anchored to the bottom.
-    scale := Min(cw / 1920, ch / 1008)
+    scale := uiScale > 0 ? uiScale : Min(cw / 1920, ch / 1008)
+    panelBottom := cy + ch + panelOffset
     return {x: cx, y: cy, w: cw, h: ch, s: scale,
+        panelBottom: panelBottom,
         left: Round(cx + cw/2 - 208*scale), right: Round(cx + cw/2 + 208*scale),
-        top: Round(cy + ch - 222*scale), bottom: Round(cy + ch - 164*scale)}
+        top: Round(panelBottom - 222*scale), bottom: Round(panelBottom - 164*scale)}
 }
 FindColor(&px, &py, x1, y1, x2, y2, color, tolerance := 15) {
     return PixelSearch(&px, &py, Round(x1), Round(y1), Round(x2), Round(y2), color, tolerance)
@@ -348,19 +390,23 @@ FindColor(&px, &py, x1, y1, x2, y2, color, tolerance := 15) {
 Observe(g) {
     s := g.s, span := g.right-g.left
     ; Require the red fishing icon; terrain can contain gold/blue lookalikes.
-    panel := FindColor(&ix, &iy, g.left-15*s, g.y+g.h-252*s,
-        g.left+17*s, g.y+g.h-222*s, 0xBB4338, 35)
+    panel := FindColor(&ix, &iy, g.left-15*s, g.panelBottom-252*s,
+        g.left+17*s, g.panelBottom-222*s, 0xBB4338, 35)
     if !panel
         return {panel: false, blue: false, gold: false, marker: -1, red: false, redY: 0, row: 0, progress: 0, under: false}
     blue := FindColor(&bx, &by, g.left+7*s, g.top, g.left+25*s, g.bottom, 0x535E6B, 12)
     gold := FindColor(&gx, &gy, g.right-48*s, g.top, g.right-6*s, g.bottom, 0xA38E55, 19)
+    ; Some starter rods use a blue-gray cast track. Gold identifies casting,
+    ; so that track must not be treated as an active reel.
+    if gold
+        blue := false
     marker := -1, row := 0
     if blue || gold {
         row := (blue ? by : gy) + Round(4*s)
         if FindColor(&mx, &my, g.left-3*s, row, g.right+3*s, row+2*s, 0xE9E4D8, 23)
-            marker := (mx-g.left)/span
+            marker := Max(0, Min(1, (mx-g.left)/span))
         else if gold && FindColor(&mx, &my, g.left-3*s, row, g.right+3*s, row+2*s, 0xD6BC77, 25)
-            marker := (mx-g.left)/span
+            marker := Max(0, Min(1, (mx-g.left)/span))
     }
     ; Red float is normally above its baseline and dips when a fish bites.
     mid := g.x + g.w/2
@@ -368,7 +414,7 @@ Observe(g) {
     if !red
         ry := 0
     under := !blue && !gold && FindColor(&ux, &uy, mid-32*s,
-        g.y+g.h-172*s, mid+32*s, g.y+g.h-156*s, 0xD45550, 32)
+        g.panelBottom-172*s, mid+32*s, g.panelBottom-156*s, 0xD45550, 32)
     progress := 0
     if blue && FindColor(&px, &py, g.right, row+22*s, g.left, row+39*s, 0x78AE99, 23)
         progress := Max(0, Min(1, (px-g.left)/span))
@@ -405,8 +451,7 @@ Tick() {
         ; Live regression test: reproduce the rod being put away while waiting.
         if testRodLoss && phase = 'Waiting for bite' && o.panel && elapsed >= 700 {
             testRodLoss := false
-            SendEvent '{9 down}'
-            rodHeld := true
+            RodDown()
             SetTimer ReleaseRod, -100
             Log('TEST putting rod away during bite wait to verify automatic recovery')
             return
@@ -415,7 +460,7 @@ Tick() {
             || phase = 'Checking rod' || phase = 'Checking fishing return' || phase = 'Waiting for combat clear'
         if inCombat && A_TickCount-combatStarted >= combatTimeoutMs {
             Stop(phase = 'Combat' ? 'Combat recovery timed out; check player'
-                : 'Rod recovery timed out; check position and rod slot 9')
+                : 'Rod recovery timed out; check position and configured rod key')
             return
         }
         if A_TickCount-healthAt >= 500 {
@@ -577,8 +622,7 @@ Tick() {
                         SetTimer Release, 0
                         Log('COFFER Sunken Coffer identified from reward image')
                         if o.panel {
-                            SendEvent '{9 down}'
-                            rodHeld := true
+                            RodDown()
                         }
                         SetPhase('Stowing rod for coffer')
                         return
@@ -604,7 +648,7 @@ Tick() {
                 ReleaseRod()
             if elapsed >= 600 {
                 if o.panel {
-                    Stop('Coffer: rod is still out; check slot 9')
+                    Stop('Coffer: rod is still out; check configured rod key')
                     return
                 }
                 SendEvent '{e down}'
@@ -628,7 +672,7 @@ Tick() {
             } else if !held && A_TickCount-lastClick >= 100
                 Pulse(40)
         } else if phase = 'Combat' {
-            detail := 'Artifact volley: T | restore rod: 9 | keyboard only'
+            detail := 'Artifact volley: T | restore configured rod | keyboard only'
             if A_TickCount-combatStarted >= combatTimeoutMs {
                 Stop('Combat recovery timed out; check player')
             } else if o.panel && elapsed >= 1000 {
@@ -647,14 +691,14 @@ Tick() {
             }
         } else if phase = 'Checking fishing return' {
             if o.panel {
-                Log('ROD confirmed out after equipping slot 9')
+                Log('ROD confirmed out after equipping configured slot')
                 SetPhase('Detecting')
             } else if EncounterVisible(g) || lastDamageAt > since {
                 SetPhase('Combat')
             } else if elapsed >= 1200
                 SetPhase('Waiting for combat clear')
         } else if phase = 'Waiting for combat clear' {
-            detail := 'Volley paused to clear combat lock; retrying rod slot 9'
+            detail := 'Volley paused to clear combat lock; retrying configured rod key'
             if o.panel {
                 CheckRod('after combat lock cleared')
             } else if EncounterVisible(g) || lastDamageAt > since {
@@ -671,10 +715,14 @@ Tick() {
     }
 }
 ShowTip(force := false) {
-    global phase, detail, lastTip, catches
+    global phase, detail, lastTip, catches, statusLabel
     if !force && A_TickCount-lastTip < 150
         return
     lastTip := A_TickCount
+    if statusLabel
+        statusLabel.Text := phase ' | Catches: ' catches '`n' detail
+    if statusLabel
+        return
     ToolTip 'Fishing | ' phase '`n' detail '`nF6 start/pause | F7 stop | F8 inspect | F10 history | Ctrl+Alt+Esc exit`nCompleted reel cycles: ' catches, 20, 60
 }
 Inspect() {

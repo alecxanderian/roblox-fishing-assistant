@@ -5,6 +5,13 @@ Press F6 with Roblox focused. The app equips your fishing rod from slot 9.
 All game input is keyboard-only: E fishes, T fires artifact volley, 9 equips
 the rod. No mouse-button input is emitted, preserving your mounted state.
 Keep Roblox in the foreground and the fishing panel unobstructed.
+The floating panel has Start, Stop, and Exit buttons for remote sessions
+where function-key shortcuts are unavailable. Start focuses Roblox locally.
+RodKey in [Control] selects the rod slot (default 9).
+[Display] UiScale and PanelOffsetY allow small-window calibration.
+profiles/acc4.ini is a separate slot-2 remote profile. It disables combat
+for the character without an artifact and disables History/Coffer while
+the account blocks the PowerShell worker. Run the app inside the RDP session.
 
 F6             Start / pause
 F7             Stop and release held game keys

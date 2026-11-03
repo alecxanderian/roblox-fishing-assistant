@@ -236,6 +236,9 @@ $stage = 'initialize'
 try {
     if ($ProcessPending) {
         foreach ($pendingJob in (Get-ChildItem -LiteralPath $store -Filter '*.ini' | Sort-Object Name)) {
+            if ($pendingJob.Name -like '*.result.ini') { continue }
+            $pendingValues = Read-Ini $pendingJob.FullName
+            if ($pendingValues['LogHistory'] -eq '0') { continue }
             $pendingRecord = Join-Path $store ($pendingJob.BaseName+'.json')
             if (-not (Test-Path -LiteralPath $pendingRecord)) {
                 & (Join-Path $PSHOME 'powershell.exe') -NoLogo -NoProfile -File $PSCommandPath -JobPath $pendingJob.FullName

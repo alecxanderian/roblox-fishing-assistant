@@ -24,6 +24,9 @@ volley. Keep Roblox in the foreground.
 | Ctrl+Alt+Esc | Exit |
 
 The application stops if Roblox loses focus or a stage times out.
+The floating control panel also provides **Start**, **Stop**, and **Exit**
+buttons. Start brings Roblox to the foreground inside the current Windows
+session, so forwarded RDP function keys are not required.
 It repeats casts by default; set `Repeat=0` for a single reel cycle.
 
 After every catch, the app verifies that the fishing panel is still present
@@ -46,6 +49,18 @@ The `[Coffer]` settings are `Enabled=1`, `OpenHoldMs=2000`, and
 ## Settings
 
 Edit `Fishing.ini`, then restart the application.
+`[Control] RodKey=9` selects the number-row rod key; separate accounts may use
+a different slot. `[Display] UiScale=0` keeps automatic scaling, while a
+positive value overrides it. `PanelOffsetY=0` shifts the fishing scans vertically.
+
+For the small acc4 remote session, `profiles/acc4.ini` provides a separate
+slot-2 profile. Run the application inside acc4, leaving Roblox foreground
+there. The host desktop can then use another Roblox client. Keep the RDP
+connection open and initially unminimized; disconnected or minimized behavior
+depends on whether that session continues rendering.
+The acc4 profile disables combat because that character has no artifact, and
+disables History/Coffer because its PowerShell script policy blocks CatchLogger.
+Those features require the worker to run successfully before being enabled.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -116,6 +131,13 @@ The completed-cycle counter does not verify a fish reward; check the game's
 Landed message or reward. Local diagnostics are written to `Fishing.log`.
 
 ## Validation
+
+The 900-pixel-wide acc4 RDP session was live-tested with the Lacquered Rod
+in slot 2. It caught a Hairy Mitten Crab, advanced fishing skill, and continued
+casting and reeling while the host Roblox window had focus. The visible Stop
+and Exit buttons were verified. At the left boundary, marker positions are
+clamped to zero so one-pixel rounding cannot disable reeling. This test kept
+RDP connected and unminimized; minimized/disconnected operation was not tested.
 
 Repeated live tests verified gold-zone casts, bite detection, and fish rewards.
 Reeling typically took about 4–5 seconds with the faster profile, compared

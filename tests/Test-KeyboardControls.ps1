@@ -6,8 +6,8 @@ if ($source -match '(?i)\b(LButton|RButton|MButton|MouseMove|MouseClick|mouse_ev
 }
 $expected = @('SendEvent ''{e down}''', 'SendEvent ''{e up}''',
     'SendEvent ''{t down}''', 'SendEvent ''{t up}''',
-    'SendEvent ''{9 down}''', 'SendEvent ''{9 up}''')
+    'SendEvent ''{'' rodKey '' down}''', 'SendEvent ''{'' rodKey '' up}''')
 foreach ($input in $expected) {
     if (-not $source.Contains($input)) { throw ('Missing required keyboard input: '+$input) }
 }
-Write-Output 'Mounted keyboard-only input checks passed (E fishing, T volley, 9 rod).'
+Write-Output 'Keyboard-only input checks passed (E fishing, T volley, configurable rod key).'
