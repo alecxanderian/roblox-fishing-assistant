@@ -51,6 +51,15 @@ SlackTarget      Reel below this tension fraction; release at the limit (0.065).
 CastTarget       Release at this fraction of the casting bar (0.93).
 Repeat           1 repeats; 0 stops after a single reel cycle.
 
+Timing settings ([Timing], milliseconds):
+CastTimeoutMs       10000 (ten seconds).
+BiteTimeoutMs       120000 (two minutes).
+ReelStallTimeoutMs  120000 without a new green-progress peak.
+ReelMaximumMs      600000 maximum total fight duration (ten minutes).
+Progressing fights can pass the former 90-second cutoff. Each fish gets a
+fresh stall timer. A cast that stays at zero receives up to three E release /
+retry attempts, with a 300 ms gap, before stopping.
+
 Combat settings:
 Enabled          1 enables recovery after a panel interruption or health loss.
 AttackIntervalMs Time between T artifact-volley presses (120 ms).

@@ -25,6 +25,11 @@ if !RegExMatch(rodKey, '^[0-9]$')
 global uiScale := Float(IniRead(settings, 'Display', 'UiScale', 0))
 global panelOffset := Integer(IniRead(settings, 'Display', 'PanelOffsetY', 0))
 global controlGui := 0, statusLabel := 0
+global castTimeoutMs := Max(3000, Integer(IniRead(settings, 'Timing', 'CastTimeoutMs', 10000)))
+global biteTimeoutMs := Max(1000, Integer(IniRead(settings, 'Timing', 'BiteTimeoutMs', 120000)))
+global reelStallMs := Max(1000, Integer(IniRead(settings, 'Timing', 'ReelStallTimeoutMs', 120000)))
+global reelMaximumMs := Max(reelStallMs, Integer(IniRead(settings, 'Timing', 'ReelMaximumMs', 600000)))
+global reelWatch := 0, castRetries := 0
 global stopAfter := 0
 global maxProgress := 0, reelStarted := 0, markerAt := 0
 global combatEnabled := Integer(IniRead(settings, 'Combat', 'Enabled', 1))
@@ -347,10 +352,28 @@ EncounterVisible(g) {
 }
 SetPhase(name) {
     global phase, since, detail, previousMarker, maxProgress, reelStarted, markerAt, lostAt
+    global reelWatch, castRetries
     phase := name, since := A_TickCount, detail := '', previousMarker := -1
-    if name = 'Reeling'
+    if name = 'Detecting'
+        castRetries := 0
+    if name = 'Reeling' {
         maxProgress := 0, reelStarted := A_TickCount, markerAt := 0, lostAt := 0
+        reelWatch := {startedAt: A_TickCount, lastProgressAt: A_TickCount, checkpoint: 0}
+    }
     Log('STATE ' name)
+}
+UpdateReelProgress(watch, progress, now) {
+    if progress >= watch.checkpoint + 0.005 {
+        watch.checkpoint := progress
+        watch.lastProgressAt := now
+    }
+}
+ReelTimeoutReason(watch, now, stallMs, maximumMs) {
+    if now-watch.startedAt >= maximumMs
+        return 'Reel maximum duration reached'
+    if now-watch.lastProgressAt >= stallMs
+        return 'Reel stalled: no new green progress'
+    return ''
 }
 Stop(reason := 'Stopped') {
     global running
@@ -436,6 +459,7 @@ Tick() {
     global combatStarted, lastAttack, combatGapMs, combatTimeoutMs, combatProbeMs, rodHeld, attackHeld
     global healthAt, previousHealth, lastReelEnd, lastDamageAt, rodLostAt, testRodLoss
     global rewardResult, rewardDone, cofferEnabled, chestHoldMs, lootDurationMs
+    global castTimeoutMs, biteTimeoutMs, reelStallMs, reelMaximumMs, reelWatch, castRetries
     if stopAfter && A_TickCount >= stopAfter {
         Stop('Test finished')
         ExitApp()
@@ -490,7 +514,7 @@ Tick() {
         detail := Format('Marker: {} | blue {} | gold {} | float Y {}',
             o.marker < 0 ? '?' : Round(o.marker*100) '%', o.blue, o.gold, o.redY)
         watchRod := phase = 'Ready to cast' || phase = 'Casting' || phase = 'Cast settling'
-            || phase = 'Waiting for bite' || phase = 'Hooking'
+            || phase = 'Waiting for bite' || phase = 'Hooking' || phase = 'Cast retry'
         if o.panel
             rodLostAt := 0
         else if watchRod {
@@ -540,8 +564,21 @@ Tick() {
                 Log('CAST release at ' Round(o.marker*100, 1) '%')
                 floatBase := 0
                 SetPhase('Cast settling')
-            } else if elapsed > 5000
+            } else if elapsed >= 1500 && o.gold && o.marker >= 0 && o.marker <= 0.02 {
+                Release()
+                castRetries += 1
+                if castRetries <= 3 {
+                    Log('CAST swing did not start; releasing E before retry ' castRetries '/3')
+                    SetPhase('Cast retry')
+                } else
+                    Stop('Cast did not start after three retries; inspect with F8')
+            } else if elapsed > castTimeoutMs {
+                Log('TIMEOUT cast elapsed=' elapsed 'ms; marker=' o.marker)
                 Stop('Cast timed out: inspect with F8')
+            }
+        } else if phase = 'Cast retry' {
+            if elapsed >= 300
+                SetPhase('Ready to cast')
         } else if phase = 'Cast settling' {
             if elapsed > 600 && o.red && !o.gold {
                 floatBase := o.redY
@@ -565,7 +602,7 @@ Tick() {
                     SetPhase('Hooking')
                 }
             }
-            if elapsed > 45000
+            if elapsed > biteTimeoutMs
                 Stop('Bite timed out: inspect with F8')
         } else if phase = 'Hooking' {
             if o.blue
@@ -576,7 +613,9 @@ Tick() {
             if o.blue {
                 lostAt := 0
                 maxProgress := Max(maxProgress, o.progress)
+                UpdateReelProgress(reelWatch, o.progress, A_TickCount)
                 detail .= ' | progress ' Round(o.progress*100) '%'
+                detail .= ' | ' Round(elapsed/1000) 's'
                 if o.marker >= 0 {
                     ; Longer E pulses increase time spent reeling. Predict only
                     ; the next 30 ms, releasing at the blue-zone limit.
@@ -605,8 +644,12 @@ Tick() {
                     SetTimer CaptureCatch, -20
                 }
             }
-            if elapsed > 90000
-                Stop('Reel timed out')
+            timeoutReason := ReelTimeoutReason(reelWatch, A_TickCount, reelStallMs, reelMaximumMs)
+            if phase = 'Reeling' && timeoutReason != '' {
+                Log('TIMEOUT ' timeoutReason '; elapsed=' elapsed 'ms; noProgress='
+                    (A_TickCount-reelWatch.lastProgressAt) 'ms; maximumGreen=' Round(maxProgress*100) '%')
+                Stop(timeoutReason)
+            }
         } else if phase = 'Catch finished' {
             if !o.panel && elapsed > 500 && EncounterVisible(g) {
                 BeginCombat(false, 'enemy detected after catch')

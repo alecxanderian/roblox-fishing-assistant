@@ -73,6 +73,23 @@ Those features require the worker to run successfully before being enabled.
 Longer reel pulses increase time spent reeling. The controller predicts the
 next 30 ms of tension movement and releases E at the configured limit.
 
+The `[Timing]` section allows slower fishing areas:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| CastTimeoutMs | 10000 | Stop if a cast cannot finish within ten seconds |
+| BiteTimeoutMs | 120000 | Allow two minutes for a bite |
+| ReelStallTimeoutMs | 120000 | Stop after two minutes without a new green-progress peak |
+| ReelMaximumMs | 600000 | Maximum total fight duration of ten minutes |
+
+Reeling can continue past the former 90-second limit while the green bar
+advances. Small progress steps accumulate before refreshing the stall timer;
+backward movement does not reset it. Each new fish gets a fresh timer.
+If E is ignored and the cast marker stays at the start for 1.5 seconds, the
+app releases E, waits 300 ms, and retries up to three times. A failed cast
+still stops after the bounded retries. Timeout logs include reel duration,
+time without progress, and peak green progress for diagnosis.
+
 The `[Combat]` section controls recovery when the fishing panel closes after
 a reel cycle, or the player's health drops after fishing has begun.
 On health loss, it first presses Q to leave the fishing interface.
